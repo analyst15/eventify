@@ -1,0 +1,55 @@
+{
+  "entities": {
+    "Registration": {
+      "title": "Registration",
+      "description": "Attendee registration profile for the summit containing contact and attendee status of the registrant",
+      "type": "object",
+      "properties": {
+        "participationType": { "type": "string", "description": "Form of participation like Delegate, Sponsor, Exhibitor, Speaker" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "jobTitle": { "type": "string" },
+        "organization": { "type": "string" },
+        "country": { "type": "string", "description": "2-letter uppercase ISO country code" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "city": { "type": "string" },
+        "zipCode": { "type": "string" },
+        "address": { "type": "string" },
+        "website": { "type": "string" },
+        "areasOfInterest": { "type": "array" },
+        "proposedTopic": { "type": "string" },
+        "sessionSummary": { "type": "string" },
+        "preferredFormat": { "type": "string" },
+        "participationOpportunities": { "type": "array" },
+        "attendance": { "type": "string" },
+        "paymentStatus": { "type": "string", "enum": ["pending", "success", "saved_for_later"] },
+        "selectedTicketId": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "amountPaid": { "type": "integer" },
+        "receiptNumber": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "participationType",
+        "firstName",
+        "lastName",
+        "country",
+        "email",
+        "phone",
+        "city",
+        "address",
+        "createdAt",
+        "updatedAt",
+        "paymentStatus"
+      ]
+    }
+  },
+  "firestore": {
+    "/registrations/{registrationId}": {
+      "schema": "Registration",
+      "description": "Stores professional attendee registration profiles and tracking state"
+    }
+  }
+}

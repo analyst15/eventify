@@ -1,0 +1,6 @@
+{
+  "name": "Event Registration and Checkout",
+  "description": "Interactive event registration form with attendee category, speaker session details, file uploads, and a comprehensive ticket checkout flow supporting KES and USD ticket classes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
