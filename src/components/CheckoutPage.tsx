@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { 
   CreditCard, Smartphone, Check, ArrowLeft, ShieldCheck, 
-  MapPin, User, Mail, Phone, ExternalLink, RefreshCw, Printer, Download, Sparkles, X, Loader2 
+  MapPin, User, Mail, Phone, ExternalLink, RefreshCw, Printer, Download, Sparkles, X, Loader2, Copy 
 } from 'lucide-react';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -30,8 +30,34 @@ export default function CheckoutPage({ registrationData, registrationId, onBack,
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
   const [receiptNumber, setReceiptNumber] = useState<string>('');
   const [showExitConfirmation, setShowExitConfirmation] = useState<boolean>(false);
+  const [isTokenizing, setIsTokenizing] = useState<boolean>(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [showDpoIframeModal, setShowDpoIframeModal] = useState<boolean>(false);
+  const [dpoRedirectUrl, setDpoRedirectUrl] = useState<string>('');
+  const [copied, setCopied] = useState<boolean>(false);
 
   const selectedTicket = TICKETS.find(t => t.id === selectedTicketId) || TICKETS[0];
+
+  const handleCopyLink = async () => {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(dpoRedirectUrl);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = dpoRedirectUrl;
+        textArea.style.position = "fixed";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2050);
+    } catch (err) {
+      console.warn("Failed to copy payment URL:", err);
+    }
+  };
 
   const formatPrice = (price: number, currency: string) => {
     if (currency === 'KES') {
@@ -42,6 +68,71 @@ export default function CheckoutPage({ registrationData, registrationId, onBack,
 
   const handleProceedPayment = () => {
     setShowPaymentModal(true);
+  };
+
+  const handleDpoRealCheckout = async () => {
+    if (!registrationId) {
+      setCheckoutError("Registration profile tracking code is missing. Please go back to step 1.");
+      return;
+    }
+    
+    setIsTokenizing(true);
+    setCheckoutError(null);
+
+    try {
+      // First update selected pass category under this profile
+      const docRef = doc(db, 'registrations', registrationId);
+      await updateDoc(docRef, {
+        selectedTicketId: selectedTicketId,
+        updatedAt: serverTimestamp(),
+      });
+
+      // Query server route to produce DPO payment transaction token API payload
+      const response = await fetch('/api/dpo/create-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: selectedTicket.price,
+          currency: selectedTicket.currency,
+          email: registrationData.email,
+          firstName: registrationData.firstName,
+          lastName: registrationData.lastName,
+          phoneNumber: registrationData.phone,
+          ticketName: selectedTicket.name,
+          registrationId: registrationId,
+          address: registrationData.address,
+          city: registrationData.city,
+          country: registrationData.country,
+          zipCode: registrationData.zipCode,
+        }),
+      });
+
+      const body = await response.json();
+      if (body.success && body.paymentUrl) {
+        setDpoRedirectUrl(body.paymentUrl);
+        setShowDpoIframeModal(true);
+        
+        try {
+          // Programmatically trigger a referrer-stripped redirection to bypass CloudFront WAF blocks
+          const link = document.createElement('a');
+          link.href = body.paymentUrl;
+          link.rel = 'noreferrer noopener';
+          link.target = '_blank';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        } catch (popupErr) {
+          console.warn("Redirection popup blocked by browser policies:", popupErr);
+        }
+      } else {
+        setCheckoutError(body.error || "Failed to establish a session with the DPO Group gateway.");
+      }
+    } catch (err) {
+      console.error("DPO proxy exception:", err);
+      setCheckoutError("An error occurred whilst configuring secure DPO environment details.");
+    } finally {
+      setIsTokenizing(false);
+    }
   };
 
   const handleSimulatePayment = async (e: React.FormEvent) => {
@@ -408,6 +499,14 @@ export default function CheckoutPage({ registrationData, registrationId, onBack,
                 </div>
               </div>
 
+              {/* Checkout / Tokenizing Error Alert */}
+              {checkoutError && (
+                <div className="bg-red-950/40 border border-red-500/35 rounded-xl p-3.5 text-left text-xs text-red-200 leading-normal animate-in fade-in duration-200">
+                  <span className="font-extrabold uppercase tracking-wide">DPO Config Error:</span>
+                  <p className="mt-1 font-semibold">{checkoutError}</p>
+                </div>
+              )}
+
               {/* Secure Payments DPO notice */}
               <div className="flex items-start gap-2.5 p-3.5 bg-neutral-800/80 rounded-xl border border-neutral-850">
                 <ShieldCheck className="w-4.5 h-4.5 text-emerald-400 flex-shrink-0 self-center" />
@@ -416,17 +515,37 @@ export default function CheckoutPage({ registrationData, registrationId, onBack,
                 </p>
               </div>
 
+              {/* Action Button 1: Real Live DPO Redirect */}
+              <button
+                onClick={handleDpoRealCheckout}
+                disabled={isTokenizing || isExiting}
+                className="w-full bg-white hover:bg-neutral-100 text-neutral-950 font-bold py-4 rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 cursor-pointer font-sans disabled:opacity-50"
+              >
+                {isTokenizing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-neutral-950" />
+                    Connecting DPO Secure API...
+                  </>
+                ) : (
+                  <>
+                    <CreditCard className="w-4 h-4 text-neutral-950" />
+                    Pay with Live DPO Gateway
+                  </>
+                )}
+              </button>
+
+              {/* Action Button 2: Simulated Sandbox Payment (Simulation) */}
               <button
                 onClick={handleProceedPayment}
-                className="w-full bg-white hover:bg-neutral-100 text-neutral-950 font-bold py-4 rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 cursor-pointer font-sans"
+                disabled={isTokenizing || isExiting}
+                className="w-full bg-neutral-800 hover:bg-neutral-750 border border-neutral-700 text-neutral-200 hover:text-white font-bold py-3.5 rounded-xl transition-all text-xs flex items-center justify-center gap-2 cursor-pointer font-sans disabled:opacity-50"
               >
-                <CreditCard className="w-4 h-4 text-neutral-950" />
-                Proceed to Secure Payment
+                <span>Test Offline payment card/MM sandbox</span>
               </button>
 
               <button
                 onClick={handleKeepSavedAndExit}
-                disabled={isExiting}
+                disabled={isExiting || isTokenizing}
                 type="button"
                 className="w-full border border-neutral-700 hover:border-neutral-500 bg-transparent hover:bg-white/5 text-neutral-300 hover:text-white font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-1.5 text-xs cursor-pointer font-sans disabled:opacity-50"
               >
@@ -641,6 +760,94 @@ export default function CheckoutPage({ registrationData, registrationId, onBack,
                 <span className="text-[10px] font-semibold uppercase tracking-wider">PCI-DSS Level 1 Encrypted</span>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Secure DPO iframe redirect helper modal */}
+      {showDpoIframeModal && (
+        <div className="fixed inset-0 z-55 bg-neutral-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-gray-100 animate-in fade-in-50 duration-250 p-6 space-y-6">
+            <div className="text-center space-y-3">
+              <div className="w-12 h-12 bg-neutral-100 text-neutral-900 rounded-full flex items-center justify-center mx-auto">
+                <ExternalLink className="w-6 h-6 animate-pulse text-neutral-900" />
+              </div>
+              <h3 className="text-lg font-bold text-neutral-950">Secure Payment Redirection</h3>
+              <p className="text-xs text-neutral-650 leading-relaxed">
+                We have successfully generated a secure live transaction token with <span className="font-extrabold text-neutral-950">DPO Group (Direct Pay Online)</span>.
+              </p>
+            </div>
+
+            <div className="bg-neutral-50 p-4 rounded-xl border border-gray-150 space-y-2">
+              <div className="flex justify-between text-xs text-neutral-500">
+                <span>Pass Tier selected:</span>
+                <span className="font-bold text-neutral-800">{selectedTicket.name}</span>
+              </div>
+              <div className="flex justify-between text-xs text-neutral-500 border-b border-gray-100 pb-2">
+                <span>Payable Amount:</span>
+                <span className="font-mono font-bold text-neutral-900">{formatPrice(selectedTicket.price, selectedTicket.currency)}</span>
+              </div>
+              <div className="flex justify-between text-[10px] text-neutral-400 pt-1">
+                <span>Unique Registration Code:</span>
+                <span className="font-mono text-neutral-600 font-bold">{registrationId}</span>
+              </div>
+            </div>
+
+            {/* CloudFront / WAF Safety Advisory Notice Box */}
+            <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl text-left space-y-1 text-neutral-800">
+              <p className="text-xs font-extrabold flex items-center gap-1 text-amber-805">
+                <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                CloudFront WAF 403 Safety Check
+              </p>
+              <p className="text-[10px] text-neutral-600 leading-relaxed">
+                Legitimate web gateways require direct human browsing. If opening the gateway link directly is blocked by security policies (e.g., getting a CloudFront 403 Error inside developer sandboxes), please use the <strong className="text-neutral-900 font-bold">Copy Payment Link</strong> button below to open it in a new window or Private/Incognito browser tab.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <a
+                href={dpoRedirectUrl}
+                target="_blank"
+                rel="noreferrer noopener"
+                onClick={() => setShowDpoIframeModal(false)}
+                className="w-full bg-neutral-950 hover:bg-neutral-900 text-white font-bold py-3.5 rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 cursor-pointer text-sm font-sans text-center"
+              >
+                <CreditCard className="w-4 h-4 text-emerald-400" />
+                Go to Secure DPO Gateway ↗
+              </a>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyLink}
+                  className="flex-1 border bg-neutral-50 hover:bg-neutral-100 border-gray-250 text-neutral-800 font-extrabold py-2.5 rounded-xl transition-all text-xs cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                      Copied Secure URL!
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-neutral-600" />
+                      Copy Payment Link
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowDpoIframeModal(false)}
+                  className="flex-shrink-0 border border-gray-200 bg-white hover:bg-gray-50 text-neutral-600 font-semibold px-4 py-2.5 rounded-xl transition-all text-xs cursor-pointer text-center"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <p className="text-center text-[10px] text-gray-400 leading-normal">
+              Once you complete payment on the DPO portal, you will be redirected back here automatically to finalize registration and access your entry badge.
+            </p>
           </div>
         </div>
       )}

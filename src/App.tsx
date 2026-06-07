@@ -8,7 +8,7 @@ import {
   Sparkles, Calendar, MapPin, CheckCircle, Ticket, 
   UserCheck, ShieldAlert, Loader2 
 } from 'lucide-react';
-import { collection, doc, setDoc, updateDoc, serverTimestamp, getDocFromServer } from 'firebase/firestore';
+import { collection, doc, setDoc, updateDoc, serverTimestamp, getDocFromServer, getDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
 import { RegistrationData } from './types';
 import RegistrationForm from './components/RegistrationForm';
@@ -20,7 +20,32 @@ export default function App() {
   const [registrationId, setRegistrationId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [isVerifyingPayment, setIsVerifyingPayment] = useState<boolean>(false);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [copiedNgrok, setCopiedNgrok] = useState<boolean>(false);
+  const [ngrokStatus, setNgrokStatus] = useState<{
+    active: boolean;
+    url: string | null;
+    error: string | null;
+    hasToken: boolean;
+  } | null>(null);
   
+  // Check active ngrok tunnel from full-stack backend
+  useEffect(() => {
+    async function checkNgrok() {
+      try {
+        const response = await fetch('/api/ngrok-status');
+        const data = await response.json();
+        setNgrokStatus(data);
+      } catch (err) {
+        console.warn("Failed to check active ngrok tunnel status:", err);
+      }
+    }
+    checkNgrok();
+    const interval = setInterval(checkNgrok, 11000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Test Firestore Connection on Boot
   useEffect(() => {
     async function testConnection() {
@@ -33,6 +58,85 @@ export default function App() {
       }
     }
     testConnection();
+  }, []);
+
+  // Check URL parameters for DPO payment callback actions on boot
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const paymentSuccess = params.get('paymentSuccess') === 'true';
+    const paymentCancelled = params.get('paymentCancelled') === 'true';
+    const regId = params.get('regId');
+    const transToken = params.get('transToken') || params.get('ID');
+
+    async function processDpoCallback() {
+      if (paymentSuccess && regId && transToken) {
+        setIsVerifyingPayment(true);
+        setVerificationError(null);
+        try {
+          // 1. Verify token securely through the full-stack server
+          const response = await fetch('/api/dpo/verify-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transToken }),
+          });
+          const result = await response.json();
+
+          if (result.success && result.verified) {
+            // 2. Load the stored profile to populate active checkout success page
+            const docRef = doc(db, 'registrations', regId);
+            const docSnap = await getDoc(docRef);
+            
+            if (docSnap.exists()) {
+              const currentData = docSnap.data();
+              const selectedTicketId = currentData.selectedTicketId || 'early_bird';
+              
+              // 3. Mark successful in database securely
+              await updateDoc(docRef, {
+                paymentStatus: 'success',
+                paymentMethod: 'dpo',
+                receiptNumber: transToken,
+                updatedAt: serverTimestamp(),
+              });
+
+              setRegistrationId(regId);
+              setRegistrationData({
+                ...currentData as RegistrationData,
+                selectedTicketId: selectedTicketId,
+              });
+              setHasPaid(true);
+              setCurrentStep('checkout');
+            } else {
+              setVerificationError("Your registration record was not found, though your payment went through on DPO Group.");
+            }
+          } else {
+            setVerificationError(`DPO secure gateway verification failed: ${result.resultExplanation || 'Transaction unverified'}`);
+          }
+        } catch (err) {
+          console.error("DPO verification exception:", err);
+          setVerificationError("Failed to verify transaction status securely with DPO gateway service.");
+        } finally {
+          setIsVerifyingPayment(false);
+          // Clean parameters out of URL for session security
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      } else if (paymentCancelled && regId) {
+        try {
+          const docRef = doc(db, 'registrations', regId);
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            setRegistrationId(regId);
+            setRegistrationData(docSnap.data() as RegistrationData);
+            setCurrentStep('checkout');
+            setVerificationError("The payment attempt via DPO Secure Gateway was cancelled or declined. You can select another pass or try checkout again.");
+          }
+        } catch (err) {
+          console.error("Error setting up return session from cancelled DPO payment:", err);
+        }
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
+
+    processDpoCallback();
   }, []);
 
   // High fidelity default structural state
@@ -135,6 +239,50 @@ export default function App() {
         });
       }
 
+      // Dispatch non-blocking registration notification email via server-side endpoint
+      const notifyAttachmentsPayload = {
+        bio: data.attachments.bio ? { name: data.attachments.bio.name, size: data.attachments.bio.size, type: data.attachments.bio.type, dataUrl: data.attachments.bio.dataUrl } : null,
+        companyProfile: data.attachments.companyProfile ? { name: data.attachments.companyProfile.name, size: data.attachments.companyProfile.size, type: data.attachments.companyProfile.type, dataUrl: data.attachments.companyProfile.dataUrl } : null,
+        headshot: data.attachments.headshot ? { name: data.attachments.headshot.name, size: data.attachments.headshot.size, type: data.attachments.headshot.type, dataUrl: data.attachments.headshot.dataUrl } : null,
+        presentationDeck: data.attachments.presentationDeck ? { name: data.attachments.presentationDeck.name, size: data.attachments.presentationDeck.size, type: data.attachments.presentationDeck.type, dataUrl: data.attachments.presentationDeck.dataUrl } : null,
+      };
+
+      const notifyPayload = {
+        registrationId: docId,
+        participationType: data.participationType,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        jobTitle: data.jobTitle || '',
+        organization: data.organization || '',
+        country: data.country,
+        email: data.email,
+        phone: data.phone,
+        city: data.city,
+        zipCode: data.zipCode || '',
+        address: data.address,
+        website: data.website || '',
+        areasOfInterest: data.areasOfInterest || [],
+        proposedTopic: data.proposedTopic || '',
+        sessionSummary: data.sessionSummary || '',
+        preferredFormat: data.preferredFormat || '',
+        participationOpportunities: data.participationOpportunities || [],
+        attendance: data.attendance || '',
+        attachments: notifyAttachmentsPayload,
+      };
+
+      fetch('/api/registration/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(notifyPayload),
+      })
+        .then(res => res.json())
+        .then(result => {
+          console.log("[NOTIFICATION DISPATCH] Result:", result);
+        })
+        .catch(err => {
+          console.error("[NOTIFICATION DISPATCH] Error:", err);
+        });
+
       setRegistrationData(data);
       setCurrentStep('checkout');
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -160,6 +308,56 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50/50 flex flex-col font-sans selection:bg-neutral-900 selection:text-white">
+      {/* Dev utilities / Ngrok tunnel banner */}
+      {ngrokStatus && (ngrokStatus.active || !ngrokStatus.hasToken) && (
+        <div className="bg-neutral-900 border-b border-neutral-800 text-[11px] font-mono py-2 px-4 text-center flex flex-col md:flex-row items-center justify-center gap-1.5 md:gap-4 text-neutral-400 z-50">
+          {ngrokStatus.active ? (
+            <>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
+                <span className="font-extrabold text-neutral-200">ACTIVE NGROK TUNNEL:</span>
+              </div>
+              <a
+                href={ngrokStatus.url || '#'}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-emerald-400 font-bold hover:underline select-all cursor-pointer transition-colors break-all"
+              >
+                {ngrokStatus.url}
+              </a>
+              <span className="hidden md:inline text-neutral-700">|</span>
+              <button 
+                type="button"
+                onClick={async () => {
+                  try {
+                    if (ngrokStatus.url) {
+                      await navigator.clipboard.writeText(ngrokStatus.url);
+                      setCopiedNgrok(true);
+                      setTimeout(() => setCopiedNgrok(false), 2000);
+                    }
+                  } catch (e: any) {
+                    console.warn("Failed to copy ngrok URL:", e);
+                  }
+                }}
+                className="hover:text-white transition-colors bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 rounded px-2 py-0.5 text-[10px] font-bold cursor-pointer shrink-0 min-w-[70px] select-none text-center"
+              >
+                {copiedNgrok ? "Copied!" : "Copy URL"}
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-1.5 text-amber-400 font-semibold shrink-0">
+                <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0"></span>
+                <span>Ngrok Tunnel ready for deployment</span>
+              </div>
+              <span className="text-neutral-500 text-[10px]">
+                To expose this dev environment publicly, add your <code className="bg-neutral-800 border border-neutral-700 text-neutral-350 px-1 py-0.5 rounded text-[10px]">NGROK_AUTHTOKEN</code> inside your App Settings/Secrets.
+              </span>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Immersive Event Hero Banner Area */}
       <header className="bg-neutral-950 text-white relative overflow-hidden py-10 md:py-14 border-b border-neutral-900 shadow-sm">
         <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:16px_16px]"></div>
@@ -259,6 +457,17 @@ export default function App() {
           </div>
         )}
 
+        {/* Verification Alert Banner */}
+        {verificationError && (
+          <div className="max-w-2xl mx-auto mb-6 bg-neutral-900/5 hover:bg-neutral-900/10 border border-gray-250 rounded-xl p-4 flex items-start gap-3 text-neutral-900 text-sm animate-in fade-in duration-200">
+            <ShieldAlert className="w-5 h-5 text-neutral-900 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <span className="font-extrabold text-xs uppercase tracking-wider text-gray-500">Notice</span>
+              <p className="text-xs text-neutral-800 font-semibold leading-relaxed">{verificationError}</p>
+            </div>
+          </div>
+        )}
+
         {/* Dynamic Route View rendering */}
         <div className="focus-target animate-in fade-in slide-in-from-bottom-2 duration-305 ease-out rounded-2xl relative">
           {/* Glassmorphic blocking saving overlay */}
@@ -267,6 +476,14 @@ export default function App() {
               <Loader2 className="w-8 h-8 text-neutral-900 animate-spin" />
               <p className="text-sm font-bold text-neutral-900">Synchronizing attendee database...</p>
               <p className="text-[10px] text-gray-500 font-mono">Securing profile on Cloud Firestore</p>
+            </div>
+          )}
+
+          {isVerifyingPayment && (
+            <div className="absolute inset-0 z-50 bg-white/80 backdrop-blur-xs rounded-2xl flex flex-col items-center justify-center gap-3 border border-gray-100 min-h-[400px]">
+              <Loader2 className="w-8 h-8 text-neutral-900 animate-spin" />
+              <p className="text-sm font-semibold text-neutral-950">Verifying secure payload with DPO Group...</p>
+              <p className="text-[10px] text-gray-500 font-mono">Securing real-time transaction approval records</p>
             </div>
           )}
 

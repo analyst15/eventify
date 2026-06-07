@@ -42,6 +42,7 @@ export interface FileMock {
   name: string;
   size: string;
   type: string;
+  dataUrl?: string;
 }
 
 export interface Ticket {

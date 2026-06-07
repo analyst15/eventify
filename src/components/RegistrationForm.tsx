@@ -164,19 +164,24 @@ export default function RegistrationForm({ initialData, onSubmit }: Registration
   // Simulating uploads
   const simulateFileUpload = (field: keyof RegistrationData['attachments'], file: File) => {
     const formattedSize = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
-    const mock: FileMock = {
-      name: file.name,
-      size: formattedSize,
-      type: file.type
-    };
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const mock: FileMock = {
+        name: file.name,
+        size: formattedSize,
+        type: file.type,
+        dataUrl: reader.result as string
+      };
 
-    setFormData(prev => ({
-      ...prev,
-      attachments: {
-        ...prev.attachments,
-        [field]: mock
-      }
-    }));
+      setFormData(prev => ({
+        ...prev,
+        attachments: {
+          ...prev.attachments,
+          [field]: mock
+        }
+      }));
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, field: keyof RegistrationData['attachments']) => {
