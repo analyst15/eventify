@@ -205,7 +205,7 @@ async function startServer() {
         return;
       }
 
-      const recipientEmail = (process.env.NOTIFICATION_RECIPIENT_EMAIL || "techanalyst41@gmail.com").trim();
+      const recipientEmail = (process.env.NOTIFICATION_RECIPIENT_EMAIL || "connect@econ.africa").trim();
       const smtpHost = process.env.SMTP_HOST ? process.env.SMTP_HOST.trim() : "";
       const smtpPort = process.env.SMTP_PORT ? process.env.SMTP_PORT.trim() : "587";
       const smtpUser = process.env.SMTP_USER ? process.env.SMTP_USER.trim() : "";
@@ -443,6 +443,120 @@ async function startServer() {
       console.error("[EMAIL ERROR] Failed to perform notify:", err);
       // We don't return 500 so the client registration flow is not blocked. Instead we return success: false with error details.
       res.json({ success: false, error: err.message || "Unknown error" });
+    }
+  });
+
+  // GET endpoint to test SMTP settings and connection diagnostics
+  app.get("/api/registration/test-email", async (req, res) => {
+    try {
+      const recipientEmail = (process.env.NOTIFICATION_RECIPIENT_EMAIL || "connect@econ.africa").trim();
+      const smtpHost = process.env.SMTP_HOST ? process.env.SMTP_HOST.trim() : "";
+      const smtpPort = process.env.SMTP_PORT ? process.env.SMTP_PORT.trim() : "587";
+      const smtpUser = process.env.SMTP_USER ? process.env.SMTP_USER.trim() : "";
+      const smtpPass = process.env.SMTP_PASS ? process.env.SMTP_PASS.trim() : "";
+
+      const diagnosticLog: string[] = [];
+      diagnosticLog.push(`[DIAGNOSTIC] Current local time is: ${new Date().toISOString()}`);
+      diagnosticLog.push(`[DIAGNOSTIC] Recipient Email: "${recipientEmail}"`);
+      diagnosticLog.push(`[DIAGNOSTIC] SMTP Host: "${smtpHost}"`);
+      diagnosticLog.push(`[DIAGNOSTIC] SMTP Port: "${smtpPort}"`);
+      diagnosticLog.push(`[DIAGNOSTIC] SMTP User: "${smtpUser}"`);
+      diagnosticLog.push(`[DIAGNOSTIC] SMTP Pass length: ${smtpPass.length} chars (is set: ${!!smtpPass})`);
+
+      if (!smtpHost || !smtpUser || !smtpPass) {
+        res.json({
+          success: false,
+          error: "Incomplete SMTP configuration. Please check your environment variables.",
+          diagnostics: diagnosticLog
+        });
+        return;
+      }
+
+      const transporterOptions: any = {};
+      if (smtpHost.toLowerCase().includes("gmail")) {
+        diagnosticLog.push(`[DIAGNOSTIC] Gmail specific service transport enabled.`);
+        transporterOptions.service = "gmail";
+        transporterOptions.auth = {
+          user: smtpUser,
+          pass: smtpPass,
+        };
+      } else {
+        diagnosticLog.push(`[DIAGNOSTIC] Custom SMTP host transport configured.`);
+        transporterOptions.host = smtpHost;
+        transporterOptions.port = parseInt(smtpPort || "587");
+        transporterOptions.secure = smtpPort === "465";
+        transporterOptions.auth = {
+          user: smtpUser,
+          pass: smtpPass,
+        };
+        if (smtpPort !== "465") {
+          transporterOptions.tls = {
+            rejectUnauthorized: false
+          };
+        }
+      }
+
+      diagnosticLog.push(`[DIAGNOSTIC] Creating nodemailer transporter with options: host="${transporterOptions.host || 'Gmail service'}", port="${transporterOptions.port || 'Default Service Port'}", secure="${transporterOptions.secure || 'false'}"`);
+      const transporter = nodemailer.createTransport(transporterOptions);
+
+      diagnosticLog.push(`[DIAGNOSTIC] Verifying connection to ${smtpHost}...`);
+      
+      const verifyPromise = transporter.verify();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("SMTP Connection Timeout (10 seconds limit exceeded). This usually indicates your hosting provider's firewall blocks outgoing connections on this port.")), 10000)
+      );
+
+      await Promise.race([verifyPromise, timeoutPromise]);
+      diagnosticLog.push(`[DIAGNOSTIC] SMTP connection Verified successfully!`);
+
+      diagnosticLog.push(`[DIAGNOSTIC] Attempting to send test email to: ${recipientEmail}...`);
+      const info = await transporter.sendMail({
+        from: `"Event Registration Diagnostics" <${smtpUser}>`,
+        to: recipientEmail,
+        subject: `🧪 Registration Email Test Diagnostic - Success!`,
+        html: `
+          <h1>SMTP Connection & Send Test Success 🚀</h1>
+          <p>If you are reading this email, your Web Application's SMTP mailing is fully functional!</p>
+          <p><b>Diagnosis Details:</b></p>
+          <ul>
+            <li><b>SMTP Host:</b> ${smtpHost}</li>
+            <li><b>SMTP Port:</b> ${smtpPort}</li>
+            <li><b>SMTP Username:</b> ${smtpUser}</li>
+            <li><b>Notification Recipient:</b> ${recipientEmail}</li>
+            <li><b>Attempted At (UTC):</b> ${new Date().toUTCString()}</li>
+          </ul>
+          <p>Please double check if spam filters, folders or email delivery rule configurations are delaying delivery.</p>
+        `
+      });
+
+      diagnosticLog.push(`[DIAGNOSTIC] Test email dispatched successfully! Message ID: ${info.messageId}`);
+      if (info.accepted && info.accepted.length > 0) {
+        diagnosticLog.push(`[DIAGNOSTIC] Delivery accepted by: ${info.accepted.join(', ')}`);
+      }
+      if (info.rejected && info.rejected.length > 0) {
+        diagnosticLog.push(`[DIAGNOSTIC] Warning! Delivery rejected by: ${info.rejected.join(', ')}`);
+      }
+
+      res.json({
+        success: true,
+        message: "SMTP is fully operational! Test email has been successfully sent.",
+        messageId: info.messageId,
+        recipient: recipientEmail,
+        diagnostics: diagnosticLog
+      });
+
+    } catch (err: any) {
+      console.error("[TEST EMAIL ERROR] Diagnostics failed:", err);
+      res.json({
+        success: false,
+        error: err.message || String(err),
+        errorCode: err.code || "UNKNOWN",
+        diagnostics: [
+          ...((err.message && err.message.includes("Timeout")) ? [] : ["SMTP Verification or Handshake Failed!"]),
+          `Error Details: ${err.message || String(err)}`,
+          `Hint: If you are using Gmail, make sure you enabled 2-Step Verification and generated an active "App Password" (which should be 16 characters long). If you are hosting on cPanel or similar shared hosting, verify with your host provider if outbound SMTP port connections (587 or 465) are blocked.`
+        ]
+      });
     }
   });
 
