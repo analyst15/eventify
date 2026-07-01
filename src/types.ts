@@ -11,6 +11,7 @@ export type AttendanceType = 'Physical Attendance' | 'Virtual Participation';
 
 export interface RegistrationData {
   participationType: ParticipationType;
+  selectedTicketId?: string;
   firstName: string;
   lastName: string;
   jobTitle: string;

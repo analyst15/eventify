@@ -32,33 +32,35 @@ service cloud.firestore {
              (!data.keys().contains('selectedTicketId') || (data.selectedTicketId is string && data.selectedTicketId.size() <= 50)) &&
              (!data.keys().contains('paymentMethod') || (data.paymentMethod is string && data.paymentMethod.size() <= 50)) &&
              (!data.keys().contains('receiptNumber') || (data.receiptNumber is string && data.receiptNumber.size() <= 50)) &&
-             (!data.keys().contains('amountPaid') || (data.amountPaid is int && data.amountPaid >= 0));
+             (!data.keys().contains('amountPaid') || ((data.amountPaid is int || data.amountPaid is float) && data.amountPaid >= 0));
+    }
+
+    function isAdmin() {
+      return request.auth != null &&
+             request.auth.token.keys().contains('email') &&
+             (request.auth.token.email == "techanalyst41@gmail.com" || 
+              request.auth.token.email == "connect@econ.africa" ||
+              request.auth.token.email.matches('.*@econ\\.africa$')) &&
+             (request.auth.token.get('email_verified', false) == true || 
+              request.auth.token.email_verified == true);
     }
 
     // Registrations Collection Match Gates
     match /registrations/{registrationId} {
-      allow get: if isValidId(registrationId);
-      allow list: if false;
+      allow get: if isValidId(registrationId) || isAdmin();
+      allow list: if isAdmin();
 
       allow create: if isValidId(registrationId) &&
                       isValidRegistration(incoming()) &&
-                      incoming().createdAt == request.time &&
-                      incoming().updatedAt == request.time &&
-                      incoming().paymentStatus == 'pending' &&
-                      incoming().keys().hasAll([
-                        'participationType', 'firstName', 'lastName', 'jobTitle',
-                        'organization', 'country', 'email', 'phone', 'city', 'zipCode',
-                        'address', 'website', 'areasOfInterest', 'proposedTopic',
-                        'sessionSummary', 'preferredFormat', 'participationOpportunities',
-                        'attendance', 'attachments', 'createdAt', 'updatedAt',
-                        'paymentStatus'
-                      ]);
+                      incoming().createdAt is timestamp &&
+                      incoming().updatedAt is timestamp &&
+                      incoming().paymentStatus == 'pending';
 
       allow update: if isValidId(registrationId) &&
                       isValidRegistration(incoming()) &&
                       existing().paymentStatus != 'success' &&
                       incoming().createdAt == existing().createdAt &&
-                      incoming().updatedAt == request.time &&
+                      incoming().updatedAt is timestamp &&
                       (
                         // Action 1: Checkout/Payment update (from Checkout page)
                         incoming().diff(existing()).affectedKeys().hasOnly([
@@ -70,8 +72,8 @@ service cloud.firestore {
                           incoming().email == existing().email &&
                           incoming().firstName == existing().firstName &&
                           incoming().diff(existing()).affectedKeys().hasOnly([
-                            'participationType', 'lastName', 'jobTitle', 'organization',
-                            'country', 'phone', 'city', 'zipCode', 'address', 'website',
+                            'participationType', 'firstName', 'lastName', 'jobTitle', 'organization',
+                            'country', 'email', 'phone', 'city', 'zipCode', 'address', 'website',
                             'areasOfInterest', 'proposedTopic', 'sessionSummary', 'preferredFormat',
                             'participationOpportunities', 'attendance', 'attachments', 'updatedAt'
                           ])

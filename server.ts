@@ -12,9 +12,6 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  let ngrokTunnelUrl: string | null = null;
-  let ngrokError: string | null = null;
-
   // Middleware for parsing JSON bodies with limit matching potential base64 attachments size (25mb)
   app.use(express.json({ limit: "25mb" }));
   app.use(express.urlencoded({ limit: "25mb", extended: true }));
@@ -560,16 +557,6 @@ async function startServer() {
     }
   });
 
-  // GET endpoint to check the ngrok tunnel status
-  app.get("/api/ngrok-status", (req, res) => {
-    res.json({
-      active: !!ngrokTunnelUrl,
-      url: ngrokTunnelUrl,
-      error: ngrokError,
-      hasToken: !!process.env.NGROK_AUTHTOKEN
-    });
-  });
-
   // Serve static application / dev Vite middleware
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -587,30 +574,6 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", async () => {
     console.log(`Server running on port ${PORT} with environment ${process.env.NODE_ENV || "development"}`);
-
-    // Try starting the ngrok tunnel if NGROK_AUTHTOKEN is provided
-    try {
-      const authtoken = process.env.NGROK_AUTHTOKEN;
-      if (authtoken) {
-        console.log("[NGROK] Attempting to establish tunnel forward on port 3000...");
-        const ngrokObj = await import("@ngrok/ngrok");
-        const listener = await ngrokObj.forward({
-          addr: PORT,
-          authtoken: authtoken,
-        });
-        ngrokTunnelUrl = listener.url();
-        console.log(`\n==================================================`);
-        console.log(`[NGROK] Tunnel successfully established!`);
-        console.log(`[NGROK] Public Ingress URL: ${ngrokTunnelUrl}`);
-        console.log(`==================================================\n`);
-      } else {
-        console.log("[NGROK] NGROK_AUTHTOKEN is not set in environment or secrets.");
-        console.log("[NGROK] If you want to tunnel your local port 3000, please add NGROK_AUTHTOKEN.");
-      }
-    } catch (err: any) {
-      console.error("[NGROK ERROR] Could not establish ngrok tunnel:", err);
-      ngrokError = err?.message || String(err);
-    }
   });
 }
 

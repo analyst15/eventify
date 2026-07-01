@@ -27,7 +27,17 @@ export default function RegistrationForm({ initialData, onSubmit }: Registration
     }
     return false;
   });
-  const [customCountryName, setCustomCountryName] = useState('');
+  const [customCountryName, setCustomCountryName] = useState(() => {
+    if (initialData.country && !COUNTRIES.some(c => c.code === initialData.country)) {
+      // Find the name from GLOBAL_COUNTRY_MAP
+      const foundEntry = Object.entries(GLOBAL_COUNTRY_MAP).find(([_, code]) => code === initialData.country);
+      if (foundEntry) {
+        return foundEntry[0].replace(/\b\w/g, c => c.toUpperCase());
+      }
+      return initialData.country;
+    }
+    return '';
+  });
   const [customCountryCode, setCustomCountryCode] = useState(() => {
     if (initialData.country && !COUNTRIES.some(c => c.code === initialData.country)) {
       return initialData.country;
@@ -74,40 +84,81 @@ export default function RegistrationForm({ initialData, onSubmit }: Registration
     }
   };
 
-  const [matchedLabel, setMatchedLabel] = useState('');
+  const [matchedLabel, setMatchedLabel] = useState(() => {
+    if (initialData.country && !COUNTRIES.some(c => c.code === initialData.country)) {
+      const foundEntry = Object.entries(GLOBAL_COUNTRY_MAP).find(([_, code]) => code === initialData.country);
+      if (foundEntry) {
+        const matchedName = foundEntry[0].replace(/\b\w/g, c => c.toUpperCase());
+        return `${matchedName} (${initialData.country})`;
+      }
+      return `Generated (${initialData.country})`;
+    }
+    return '';
+  });
 
   const handleCustomCountryNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setCustomCountryName(val);
 
-    const normalized = val.trim().toLowerCase();
+    const trimmed = val.trim();
+    if (!trimmed) {
+      setCustomCountryCode('');
+      setFormData(prev => ({ ...prev, country: '' }));
+      setMatchedLabel('');
+      return;
+    }
+
+    const normalized = trimmed.toLowerCase();
     let matchedCode = GLOBAL_COUNTRY_MAP[normalized];
     let matchedName = '';
+    let isExactOrPartialMatch = false;
 
     if (matchedCode) {
-      matchedName = val.trim();
+      matchedName = trimmed;
+      isExactOrPartialMatch = true;
     } else if (normalized.length >= 3) {
       const allKeys = Object.keys(GLOBAL_COUNTRY_MAP);
       const foundKey = allKeys.find(k => k === normalized || k.startsWith(normalized) || k.includes(normalized));
       if (foundKey) {
         matchedCode = GLOBAL_COUNTRY_MAP[foundKey];
         matchedName = foundKey.replace(/\b\w/g, c => c.toUpperCase());
+        isExactOrPartialMatch = true;
       }
     }
 
-    if (matchedCode) {
-      setCustomCountryCode(matchedCode);
-      setFormData(prev => ({ ...prev, country: matchedCode }));
-      setMatchedLabel(`${matchedName} (${matchedCode})`);
-      if (errors.customCountryCode) {
-        setErrors(prev => {
-          const copy = { ...prev };
-          delete copy.customCountryCode;
-          return copy;
-        });
+    // Generate accurate 2-letter fallback if not found in reference map
+    if (!matchedCode) {
+      const words = trimmed.split(/\s+/).filter(Boolean);
+      if (words.length >= 2) {
+        matchedCode = (words[0][0] + words[1][0]).toUpperCase();
+      } else if (words.length === 1) {
+        const word = words[0];
+        if (word.length >= 2) {
+          matchedCode = word.substring(0, 2).toUpperCase();
+        } else {
+          matchedCode = (word + 'X').toUpperCase();
+        }
+      } else {
+        matchedCode = 'XX';
       }
+      matchedName = trimmed;
+    }
+
+    // Restrict to letters and keep it 2-letter uppercase
+    matchedCode = matchedCode.toUpperCase().replace(/[^A-Z]/g, '');
+    if (matchedCode.length < 2) {
+      matchedCode = (matchedCode + 'XX').slice(0, 2);
     } else {
-      setMatchedLabel('');
+      matchedCode = matchedCode.slice(0, 2);
+    }
+
+    setCustomCountryCode(matchedCode);
+    setFormData(prev => ({ ...prev, country: matchedCode }));
+
+    if (isExactOrPartialMatch) {
+      setMatchedLabel(`${matchedName} (${matchedCode})`);
+    } else {
+      setMatchedLabel(`Generated (${matchedCode})`);
     }
 
     if (errors.customCountryName) {
@@ -117,12 +168,6 @@ export default function RegistrationForm({ initialData, onSubmit }: Registration
         return copy;
       });
     }
-  };
-
-  const handleCustomCountryCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2);
-    setCustomCountryCode(val);
-    setFormData(prev => ({ ...prev, country: val }));
     if (errors.customCountryCode) {
       setErrors(prev => {
         const copy = { ...prev };
@@ -230,9 +275,6 @@ export default function RegistrationForm({ initialData, onSubmit }: Registration
     if (isOtherCountry) {
       if (!customCountryName.trim()) {
         newErrors.customCountryName = 'Country name is required';
-      }
-      if (!customCountryCode.trim() || customCountryCode.length !== 2) {
-        newErrors.customCountryCode = 'A valid 2-letter Country Code is required';
       }
     } else {
       if (!formData.country) {
@@ -507,7 +549,7 @@ export default function RegistrationForm({ initialData, onSubmit }: Registration
 
           {/* Conditional Custom Country Inputs */}
           {isOtherCountry && (
-            <div className="col-span-1 md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6 bg-neutral-50 p-4 rounded-xl border border-dashed border-neutral-300 animate-in fade-in duration-205">
+            <div className="col-span-1 md:col-span-2 bg-neutral-50/50 p-5 rounded-2xl border border-dashed border-gray-200 space-y-4 animate-in fade-in duration-200">
               <div className="space-y-2">
                 <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider" htmlFor="customCountryName">
                   Specify Country Name *
@@ -518,38 +560,29 @@ export default function RegistrationForm({ initialData, onSubmit }: Registration
                     type="text"
                     value={customCountryName}
                     onChange={handleCustomCountryNameChange}
-                    placeholder="e.g. Norway"
-                    className={`w-full bg-white border ${errors.customCountryName ? 'border-red-500' : 'border-gray-200'} rounded-xl pl-10 pr-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900`}
+                    placeholder="e.g. Norway, Wakanda"
+                    className={`w-full bg-white border ${errors.customCountryName ? 'border-red-500' : 'border-gray-200'} rounded-xl pl-10 pr-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900 transition-all`}
                   />
-                  <Globe className="w-4 h-4 text-gray-400 absolute left-3.5 top-3" />
+                  <Globe className="w-4 h-4 text-gray-400 absolute left-3.5 top-3.5" />
                 </div>
                 {errors.customCountryName && <p className="text-xs text-red-600 font-medium mt-1">{errors.customCountryName}</p>}
-                {matchedLabel && (
-                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-2 animate-in slide-in-from-top-1 duration-200 mt-2">
-                    <Check className="w-3.5 h-3.5 stroke-[3]" />
-                    Auto-resolved ISO Code: <span className="font-bold underline">{matchedLabel}</span>
+                
+                {customCountryName.trim() && customCountryCode && (
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 text-xs font-medium text-emerald-800 bg-emerald-50/60 border border-emerald-100/70 rounded-xl p-3.5 animate-in slide-in-from-top-1 duration-200 mt-3">
+                    <div className="flex items-center gap-1.5 font-bold">
+                      <Check className="w-4 h-4 stroke-[3] text-emerald-600" />
+                      <span>Auto-Detected Country Code:</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono bg-emerald-800 text-white px-2.5 py-0.5 rounded-lg font-extrabold text-[12px] shadow-xs tracking-wider">
+                        {customCountryCode}
+                      </span>
+                      <span className="text-gray-500">
+                        {matchedLabel.includes('Generated') ? '(System generated mapping from name)' : `(${matchedLabel.split(' (')[0]})`}
+                      </span>
+                    </div>
                   </div>
                 )}
-              </div>
-
-              <div className="space-y-2">
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider" htmlFor="customCountryCode">
-                  Specify 2-Letter Code *
-                </label>
-                <div className="relative">
-                  <input
-                    id="customCountryCode"
-                    type="text"
-                    value={customCountryCode}
-                    onChange={handleCustomCountryCodeChange}
-                    placeholder="e.g. NO"
-                    maxLength={2}
-                    className={`w-full bg-white border ${errors.customCountryCode ? 'border-red-500' : 'border-gray-200'} rounded-xl pl-10 pr-4 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-neutral-900 uppercase`}
-                  />
-                  <Globe className="w-4 h-4 text-gray-400 absolute left-3.5 top-3" />
-                </div>
-                <p className="text-[10px] text-gray-405 leading-relaxed">Used for transactional security checks (e.g. KE, US, NO, GB)</p>
-                {errors.customCountryCode && <p className="text-xs text-red-600 font-medium mt-1">{errors.customCountryCode}</p>}
               </div>
             </div>
           )}

@@ -6,45 +6,24 @@
 import { useState, useEffect } from 'react';
 import { 
   Sparkles, Calendar, MapPin, CheckCircle, Ticket, 
-  UserCheck, ShieldAlert, Loader2 
+  UserCheck, ShieldAlert, Loader2, ShieldCheck 
 } from 'lucide-react';
 import { collection, doc, setDoc, updateDoc, serverTimestamp, getDocFromServer, getDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
 import { RegistrationData } from './types';
 import RegistrationForm from './components/RegistrationForm';
 import CheckoutPage from './components/CheckoutPage';
+import Dashboard from './components/Dashboard';
 
 export default function App() {
   const [currentStep, setCurrentStep] = useState<'register' | 'checkout'>('register');
   const [hasPaid, setHasPaid] = useState<boolean>(false);
+  const [showDashboard, setShowDashboard] = useState<boolean>(false);
   const [registrationId, setRegistrationId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isVerifyingPayment, setIsVerifyingPayment] = useState<boolean>(false);
   const [verificationError, setVerificationError] = useState<string | null>(null);
-  const [copiedNgrok, setCopiedNgrok] = useState<boolean>(false);
-  const [ngrokStatus, setNgrokStatus] = useState<{
-    active: boolean;
-    url: string | null;
-    error: string | null;
-    hasToken: boolean;
-  } | null>(null);
-  
-  // Check active ngrok tunnel from full-stack backend
-  useEffect(() => {
-    async function checkNgrok() {
-      try {
-        const response = await fetch('/api/ngrok-status');
-        const data = await response.json();
-        setNgrokStatus(data);
-      } catch (err) {
-        console.warn("Failed to check active ngrok tunnel status:", err);
-      }
-    }
-    checkNgrok();
-    const interval = setInterval(checkNgrok, 11000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Test Firestore Connection on Boot
   useEffect(() => {
@@ -308,56 +287,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50/50 flex flex-col font-sans selection:bg-neutral-900 selection:text-white">
-      {/* Dev utilities / Ngrok tunnel banner */}
-      {ngrokStatus && (ngrokStatus.active || !ngrokStatus.hasToken) && (
-        <div className="bg-neutral-900 border-b border-neutral-800 text-[11px] font-mono py-2 px-4 text-center flex flex-col md:flex-row items-center justify-center gap-1.5 md:gap-4 text-neutral-400 z-50">
-          {ngrokStatus.active ? (
-            <>
-              <div className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-                <span className="font-extrabold text-neutral-200">ACTIVE NGROK TUNNEL:</span>
-              </div>
-              <a
-                href={ngrokStatus.url || '#'}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="text-emerald-400 font-bold hover:underline select-all cursor-pointer transition-colors break-all"
-              >
-                {ngrokStatus.url}
-              </a>
-              <span className="hidden md:inline text-neutral-700">|</span>
-              <button 
-                type="button"
-                onClick={async () => {
-                  try {
-                    if (ngrokStatus.url) {
-                      await navigator.clipboard.writeText(ngrokStatus.url);
-                      setCopiedNgrok(true);
-                      setTimeout(() => setCopiedNgrok(false), 2000);
-                    }
-                  } catch (e: any) {
-                    console.warn("Failed to copy ngrok URL:", e);
-                  }
-                }}
-                className="hover:text-white transition-colors bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 rounded px-2 py-0.5 text-[10px] font-bold cursor-pointer shrink-0 min-w-[70px] select-none text-center"
-              >
-                {copiedNgrok ? "Copied!" : "Copy URL"}
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="flex items-center gap-1.5 text-amber-400 font-semibold shrink-0">
-                <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0"></span>
-                <span>Ngrok Tunnel ready for deployment</span>
-              </div>
-              <span className="text-neutral-500 text-[10px]">
-                To expose this dev environment publicly, add your <code className="bg-neutral-800 border border-neutral-700 text-neutral-350 px-1 py-0.5 rounded text-[10px]">NGROK_AUTHTOKEN</code> inside your App Settings/Secrets.
-              </span>
-            </>
-          )}
-        </div>
-      )}
-
       {/* Immersive Event Hero Banner Area */}
       <header className="bg-neutral-950 text-white relative overflow-hidden py-10 md:py-14 border-b border-neutral-900 shadow-sm">
         <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:16px_16px]"></div>
@@ -375,7 +304,7 @@ export default function App() {
           <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs md:text-sm text-neutral-400 font-mono">
             <span className="flex items-center gap-1.5 justify-center">
               <Calendar className="w-4 h-4 text-emerald-400" />
-              7TH - 9TH October, 2026
+              18th - 20th November 2026
             </span>
             <span className="hidden md:inline text-neutral-600">|</span>
             <span className="flex items-center gap-1.5 justify-center">
@@ -388,11 +317,14 @@ export default function App() {
 
       {/* Main Structural Body */}
       <main className="flex-grow max-w-5xl w-full mx-auto px-4 md:px-6 py-10">
-        
-        {/* Step Progress indicators */}
-        {!hasPaid && (
-          <div className="max-w-2xl mx-auto mb-10">
-            <div className="grid grid-cols-2 gap-4 relative">
+        {showDashboard ? (
+          <Dashboard onClose={() => setShowDashboard(false)} />
+        ) : (
+          <>
+            {/* Step Progress indicators */}
+            {!hasPaid && (
+              <div className="max-w-2xl mx-auto mb-10">
+                <div className="grid grid-cols-2 gap-4 relative">
               
               {/* Step 1 Indicator */}
               <button
@@ -504,13 +436,26 @@ export default function App() {
             />
           )}
         </div>
+          </>
+        )}
       </main>
 
       {/* Footer Credentials Info */}
       <footer className="bg-white border-t border-gray-100 py-8 text-center text-xs text-gray-400 space-y-2">
         <div className="max-w-4xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p>© 2026 Continental Trade & Innovation Conference. All Rights Reserved.</p>
-          <div className="flex items-center gap-2 font-semibold text-gray-500">
+          <div className="flex flex-wrap items-center justify-center gap-2.5 font-semibold text-gray-500">
+            <button
+              onClick={() => {
+                setShowDashboard(true);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="flex items-center gap-1 text-[11px] text-gray-550 hover:text-neutral-955 font-bold underline decoration-dashed cursor-pointer transition-all"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+              Admin Portal
+            </button>
+            <span>•</span>
             <span className="flex items-center gap-1">
               <UserCheck className="w-3.5 h-3.5" />
               Verified Profile
